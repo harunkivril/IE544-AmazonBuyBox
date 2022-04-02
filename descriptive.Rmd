@@ -1,0 +1,292 @@
+---
+title: "Assignment3 Descriptive"
+output: html_document
+---
+
+```{r}
+library(lubridate)
+library(ggplot2)
+library(bnlearn)
+library(data.table)
+```
+
+
+```{r}
+train = readRDS("~/Desktop/boun/ie544/assignment3/amz_train.rds")
+setDT(train)
+test = readRDS("~/Desktop/boun/ie544/assignment3/amz_test.rds")
+setDT(test)
+head(train)
+```
+
+```{r}
+summary(train)
+```
+```{r}
+summary(test)
+```
+
+```{r}
+length(unique(unlist(train$pid))) # 9
+length(unique(unlist(train$sid))) # 184
+length(unique(unlist(train$epoc))) # 1117
+```
+
+```{r}
+# number of stores not in train but in test
+length(setdiff(unique(test$sid),unique(train$sid)))
+# number of stores in test
+length(unique(test$sid))
+# number of stores in train
+length(unique(train$sid))
+# total different stores
+length(unique(c(train$sid, test$sid)))
+```
+```{r}
+# number of products not in train but in test
+length(setdiff(unique(test$pid),unique(train$pid)))
+# number of products in test
+length(unique(test$pid))
+# number of products in train
+length(unique(train$pid))
+```
+```{r}
+# Number of seller by date and pid
+train[, date:=as_date(epoc)]
+temp = train[, .(Nseller = length(unique(sid))), by=c("date", "pid")]
+ggplot(data = temp, aes(x=date, y=Nseller, group=pid, col=pid)) + geom_line()
+```
+
+
+```{r}
+# Number of products by date
+temp = train[, .(Nproduct = length(unique(pid))), by=c("date")]
+ggplot(data = temp, aes(x=date, y=Nproduct)) + geom_line()
+```
+
+```{r}
+# Number of products by date
+test[, date:=as_date(epoc)]
+temp = test[, .(Nproduct = length(unique(test$pid))), by=test$date]
+# we have all the products in the test period
+```
+
+```{r}
+# Number of sellers by pid
+temp = train[, .(Nsellers = length(unique(sid))), by="pid"]
+ggplot(data = temp, aes(x=pid, y=Nsellers)) + geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90))  
+```
+
+
+
+```{r}
+# Abg bbox vs avg min max price by pid
+setorder(train, epoc)
+temp = train[, .(avg_price=mean(price), 
+          max_price=max(price), 
+          min_price=min(price), 
+          avg_bbox_price=mean(bbox_price), 
+          max_bbox_price=max(bbox_price), 
+          min_bbox_price=min(bbox_price)),  by=c("pid", "date")]
+
+ggplot(data = temp, aes(x=date)) + geom_line(aes(y=min_price, group=pid, col="Min Price"))  + 
+  geom_line(aes(y=max_price, group=pid, col="Max Price")) +
+  geom_line(aes(y=avg_price, group=pid, col="Avg Price")) +
+  geom_line(aes(y=avg_bbox_price, group=pid, col="Avg BBox Price")) +
+  facet_wrap(~pid, ncol=3, scales ="free_y")
+
+```
+
+```{r}
+# Avg min max bbox vs min price by pid 
+  ggplot(data = temp, aes(x=date)) + 
+    geom_line(aes(y=avg_bbox_price, group=pid, col="Avg BBox Price")) +
+    geom_line(aes(y=min_bbox_price, group=pid, col="Min BBox Price")) +
+    geom_line(aes(y=max_bbox_price, group=pid, col="Max BBox Price")) +
+    geom_line(aes(y=min_price, group=pid, col="Min Price")) +
+    facet_wrap(~pid, ncol=3, scales ="free_y")
+```
+
+```{r}
+#Avg, min max Shipping cost bbox vs total
+bbox_temp = train[sid == bbox_sid, 
+          .(BBox_avg_shipping_cost=mean(na.omit(shipping)), 
+          BBox_max_shipping_cost=max(na.omit(shipping)), 
+          BBox_min_shipping_cost=min(na.omit(shipping))), by="date"]
+temp = train[,
+          .(avg_shipping_cost=mean(na.omit(shipping)), 
+          max_shipping_cost=max(na.omit(shipping)), 
+          min_shipping_cost=min(na.omit(shipping))), by="date"]
+temp = merge(bbox_temp, temp)
+temp = melt(temp ,  id.vars = 'date', variable.name = 'Cols')
+
+ggplot(temp, aes(date,value)) + geom_line(aes(colour = Cols))
+```
+
+
+```{r}
+# Avg, min max seller rating bbox vs total
+temp = train[, .(avg_sid_rating=mean(sid_rating), 
+                max_sid_rating=max(sid_rating), 
+                min_sid_rating=min(sid_rating)), by="pid"]
+bbox_temp =  train[sid==bbox_sid, .(BBox_avg_sid_rating=mean(sid_rating), 
+                                    BBox_max_sid_rating=max(sid_rating), 
+                                    BBox_min_sid_rating=min(sid_rating)),  by="pid"]
+temp = merge(temp , bbox_temp)
+temp
+```
+
+```{r}
+#Avg min max pos fb  bbox vs total by pid
+temp = train[, .(avg_sid_pfb=mean(sid_pos_fb),
+                max_sid_pfb=max(sid_pos_fb), 
+                min_sid_pfb=min(sid_pos_fb)), by="pid"]
+bbox_temp =  train[sid==bbox_sid, .(BBox_avg_sid_pfb=mean(sid_pos_fb),
+                                    BBox_max_sid_pfb=max(sid_pos_fb), 
+                                    BBox_min_sid_pfb=min(sid_pos_fb)),  by="pid"]
+temp = merge(temp , bbox_temp)
+temp
+```
+
+```{r}
+#Avg min max sid_cntbbox vs total by pid
+temp = train[, .(avg_sid_cnt=mean(sid_rating_cnt), 
+                max_sid_cnt=max(sid_rating_cnt), 
+                min_sid_cnt=min(sid_rating_cnt)), by="pid"]
+
+bbox_temp =  train[sid==bbox_sid, .(BBox_avg_sid_cnt=mean(sid_rating_cnt), 
+                                    BBox_max_sid_cnt=max(sid_rating_cnt), 
+                                    BBox_min_sid_cnt=min(sid_rating_cnt)), by="pid"]
+temp = merge(temp , bbox_temp)
+temp
+```
+
+```{r}
+#rating count by date and pid
+ggplot(data = train, aes(x=epoc)) + geom_line(aes(y=pid_rating_cnt, group=pid, colour=pid)) + facet_wrap(~pid, ncol=3)
+```
+
+```{r}
+#rating by date and pid
+ggplot(data = train, aes(x=epoc)) + geom_line(aes(y=(pid_rating), group=pid, colour=pid)) + facet_wrap(~pid, ncol=3)
+```
+
+```{r}
+# Overall amazon win
+train[sid=="amazon" & bbox_sid=="amazon", .N] / train[sid=="amazon", .N]
+```
+
+
+```{r}
+# Amazon win By week
+train[, week:=lubridate::week(date)]
+n_amazon_bbox = train[sid=="amazon" & bbox_sid=="amazon", .(wins=.N), by=week] 
+n_amazon = train[sid=="amazon", .(total=.N), by=week] 
+amazon = merge(n_amazon_bbox, n_amazon, all.y=T)
+amazon[, percentage:= wins/total]
+ggplot(data= amazon, aes(x=week, y=percentage)) + geom_line() + geom_point()
+```
+
+
+```{r}
+#Amazon win ratio by pid
+n_amazon_bbox = train[sid=="amazon" & bbox_sid=="amazon", .(wins=.N), by=pid] 
+n_amazon = train[sid=="amazon", .(total=.N), by=pid] 
+amazon = merge(n_amazon_bbox, n_amazon, all.y = T)
+amazon[, percentage:= wins/total]
+ggplot(data= amazon, aes(x=pid, y=percentage)) + geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90))  
+
+```
+```{r}
+# Prime/fba ratio bbox vs total by pid
+temp = train[, .(prime_ratio=mean(is_prime=="yes"), fba_ratio=mean(is_fba=="yes")), by="pid"]
+bbox_temp =  train[sid==bbox_sid, .(BBox_prime_ratio=mean(is_prime=="yes"), BBox_fba_ratio=mean(is_fba=="yes")), by="pid"]
+temp = merge(temp, bbox_temp)
+temp
+```
+
+
+```{r}
+# BBox win ratio by rank
+temp = train[, .(N_obs=.N), by="rank"]
+bbox_temp = train[sid==bbox_sid, .(BBox_N_obs=.N), by="rank"]
+temp = merge(temp, bbox_temp, all.x = T)
+temp[, win_ratio := BBox_N_obs/N_obs]
+
+ggplot(data = temp, aes(x=rank, y=win_ratio)) + geom_bar(stat="identity") 
+```
+
+```{r}
+temp = train[, .(N_obs=.N), by="page"]
+bbox_temp = train[sid==bbox_sid, .(BBox_N_obs=.N), by="page"]
+temp = merge(temp, bbox_temp, all.x = T)
+temp[, win_ratio := BBox_N_obs/N_obs]
+
+ggplot(data = temp, aes(x=page, y=win_ratio)) + geom_bar(stat="identity") 
+```
+
+
+
+```{r}
+# New feature % dev from min price
+train[, min_price_dev_perc := (price/min(price) -1)*100, by=c("epoc", "pid")]
+temp = train[, .(median_min_price_dev_perc = median(min_price_dev_perc)), by="pid"]
+bbox_temp = train[sid == bbox_sid, .(BBox_meadian_min_price_dev_perc = median(min_price_dev_perc)), by="pid"]
+temp = merge(temp, bbox_temp)
+temp
+```
+
+```{r}
+hist(train$min_price_dev_perc)
+```
+
+```{r}
+train$dc_min_price_dev_perc = discretize(train[,"min_price_dev_perc", with=F])$min_price_dev_perc
+train$dc_sid_rating = discretize(train[,"sid_rating", with=F], breaks = 3)$sid_rating
+train$dc_sid_rating_cnt = discretize(train[,"sid_rating_cnt", with=F], breaks = 3)$sid_rating_cnt
+train$dc_sid_pos_fb = discretize(train[,"sid_pos_fb", with=F], breaks = 3)$sid_pos_fb
+#quantile(train$min_price_dev_perc, 1/3)
+```
+
+
+
+```{r}
+# Check max rating per view
+unique(train[, .(a =max(sid_rating)), by=c("pid", "epoc")]$a)
+```
+
+
+
+```{r}
+# Detect outliers from price
+ggplot(train, aes(x=pid, y=price)) + 
+    geom_boxplot() + theme(axis.text.x = element_text(angle = 90))  
+```
+
+```{r}
+# Create bbox and amozon features
+train[, is_amazon:=ifelse(sid == "amazon", "yes", "no") ]
+train[, bbox:=ifelse(sid == bbox_sid, "yes", "no") ]
+# Make prices 3 std away as outliers 
+train = train[, is_outlier:= (price > mean(price)+3*sqrt(var(price))), by=c("pid", "epoc")]
+print(nrow(train[is_outlier == T , c("price", "bbox_price"), with=F]))
+print(nrow(train[is_outlier == T & price <= bbox_price , c("price", "bbox_price"), with=F]))
+```
+
+
+
+```{r}
+# Remove outliers and select columns
+to_train = train[is_outlier==F,
+                 c("bbox","is_amazon", "is_fba", "is_prime", "dc_min_price_dev_perc", "sid_pos_fb", "sid_rating_cnt", "sid_rating", "page", "rank"),
+                 with=F]
+head(to_train)
+```
+```{r}
+# Ensure no bbox is eliminated
+dim(to_train[complete.cases(to_train)])
+dim(to_train[bbox=="yes"])
+dim(to_train[bbox=="yes"][complete.cases(to_train[bbox=="yes"])])
+```

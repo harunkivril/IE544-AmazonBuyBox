@@ -1,0 +1,196 @@
+---
+title: "model_v2"
+output: html_document
+---
+
+
+
+```{r}
+library(lubridate)
+library(ggplot2)
+library(data.table)
+library(bnlearn)
+
+train = readRDS("~/Workspace/BogaziciMS/IE544/Assignment3/amz_train.rds")
+setDT(train)
+test = readRDS("~/Workspace/BogaziciMS/IE544/Assignment3/amz_test_full.rds")
+setDT(test)
+
+
+train = na.omit(train)
+dim(train)
+full_data = rbind(train, test)
+full_data[, date:=as_date(epoc)]
+
+
+full_data[, min_price_dev_perc := ((price + shipping)/min(price+shipping) -1)*100, by=c("epoc", "pid")]
+full_data[, new_rank := (as.numeric(page)-1)*12 + as.numeric(rank)]
+
+train = train[, is_outlier:= (price > mean(price)+3*sqrt(var(price))), by=c("pid", "epoc")]
+train[!("amazon" %in% sid) & bbox_sid == "amazon", is_outlier:=T,  by=c("pid", "epoc")]
+train = train[is_outlier==F,]
+
+full_data$dc_min_price_dev_perc = discretize(full_data[,"min_price_dev_perc", with=F], breaks = 5)$min_price_dev_perc
+
+full_data$new_rank = discretize(full_data[,"new_rank", with=F], breaks = 5)$new_rank
+
+dc_rating = function(x){
+  if (x == 5){"5"}
+  else if (x == 4.5){"4.5"}
+  else if (x == 0 ){"0"}
+  else {"(0,4.5)"}
+  }
+
+full_data[, dc_sid_rating:=sapply(sid_rating, dc_rating)]
+
+full_data[, is_amazon:=ifelse(sid == "amazon", "yes", "no") ]
+
+full_data[, bbox:=ifelse(sid == bbox_sid, "yes", "no") ]
+
+full_data[, free_shipping:=ifelse(shipping == 0, "yes", "no")]
+
+full_data[,amazon_in:= ifelse("amazon" %in% sid | "amazon" %in% bbox_sid, T, F), by=c("epoc", "pid")]
+
+full_data[, is_amazon:=as.factor(is_amazon) ]
+full_data[, bbox:=as.factor(bbox)]
+full_data[, dc_sid_rating:= factor(dc_sid_rating , levels=c("5", "4.5", "0", "(0,4.5)"))]
+full_data[, sid_rating:= as.factor(sid_rating)]
+full_data[, new_rank:=as.factor(new_rank)]
+full_data[, pid:=as.factor(pid)]
+
+train = full_data[date < as_date("2015-09-10")]
+test = full_data[date < as_date("2015-09-10")]
+dim(train)
+train = train[, is_outlier:= (price > mean(price)+3*sqrt(var(price))), by=c("pid", "epoc")]
+train[!("amazon" %in% sid) & bbox_sid == "amazon", is_outlier:=T,  by=c("pid", "epoc")]
+train = train[is_outlier==F,]
+
+selected_cols = c("pid","bbox","is_amazon","dc_min_price_dev_perc", "dc_sid_rating", "new_rank")
+
+blist = tiers2blacklist(list("pid",setdiff(selected_cols, "pid")))
+blist = rbind(blist, tiers2blacklist(list(setdiff(selected_cols, "bbox"), "bbox")))
+blist = rbind(blist, tiers2blacklist(list("is_amazon", setdiff(selected_cols, c("pid","is_amazon")))))
+
+
+wlist = data.frame(list(from=c("new_rank","is_amazon", "pid"), to=c("bbox", "bbox", "bbox")))
+
+
+to_train_amazon = train[amazon_in==T, ..selected_cols, with=F]
+to_test_amazon = test[amazon_in==T, ..selected_cols, with=F]
+
+selected_cols2 = setdiff(selected_cols, "is_amazon")
+to_train_noamazon = train[amazon_in==F, ..selected_cols2, with=F]
+
+blist2 = tiers2blacklist(list("pid",setdiff(selected_cols2, "pid")))
+blist2 = rbind(blist2, tiers2blacklist(list(setdiff(selected_cols2, "bbox"), "bbox")))
+
+
+wlist2 = data.frame(list(from=c("pid", "new_rank"), to=c( "bbox", "bbox")))
+
+to_test_noamazon = test[amazon_in==F, ..selected_cols2, with=F]
+
+```
+
+
+# AMAZON IN
+```{r}
+par(cex=0.03)
+tabu_amz<-tabu(na.omit(to_train_amazon), whitelist = wlist,  blacklist = blist)
+graphviz.plot(tabu_amz, layout="dot")
+```
+
+
+```{r}
+par(cex=0.04)
+gs_amz<-gs(na.omit(to_train_amazon), undirected=F, whitelist = rbind(wlist, data.frame(list(from="dc_min_price_dev_perc", to="new_rank"))),  blacklist = blist)
+graphviz.plot(gs_amz, layout="dot")
+```
+
+
+```{r}
+par(cex=0.04)
+mmhc_amz<-mmhc(na.omit(to_train_amazon), whitelist = wlist,  blacklist = blist)
+graphviz.plot(mmhc_amz, layout="dot")
+```
+
+```{r}
+bn.cv(to_train_amazon, tabu_amz)
+bn.cv(to_train_amazon, gs_amz)
+bn.cv(to_train_amazon, mmhc_amz)
+```
+```{r}
+score(tabu_amz,na.omit(to_train_amazon), "aic")
+score(gs_amz,na.omit(to_train_amazon), "aic")
+score(mmhc_amz,na.omit(to_train_amazon), "aic")
+```
+# Selected from cv loss
+```{r}
+library(caret)
+amz_fit = bn.fit(tabu_amz, to_train_amazon, method="bayes", iss=10)
+cpquery(amz_fit,event=(bbox=='yes'), evidence=(is_amazon=='yes'), method="ls")
+train_pred_amz = predict(amz_fit,to_train_amazon, node="bbox", df, method = "bayes-lw")
+confusionMatrix(table(to_train_amazon$bbox, train_pred_amz))
+```
+
+NO AMAZON
+```{r}
+par(cex=0.04)
+tabu_noamz<-tabu(na.omit(to_train_noamazon), whitelist = wlist2,  blacklist = blist2)
+graphviz.plot(tabu_noamz, layout="dot")
+```
+
+```{r}
+
+par(cex=0.04)
+gs_noamz<-gs(na.omit(to_train_noamazon), undirected=F, whitelist = rbind(wlist2, data.frame(list(from=c("dc_sid_rating", "dc_min_price_dev_perc"), to=c("new_rank", "dc_sid_rating")))),  blacklist = blist2)
+graphviz.plot(gs_noamz, layout="dot")
+```
+
+```{r}
+par(cex=0.04)
+mmhc_noamz<-mmhc(na.omit(to_train_noamazon), whitelist = wlist2,  blacklist = blist2)
+graphviz.plot(mmhc_noamz, layout="dot")
+```
+
+```{r}
+bn.cv(to_train_noamazon, tabu_noamz)
+bn.cv(to_train_noamazon, gs_noamz)
+bn.cv(to_train_noamazon, mmhc_noamz)
+```
+```{r}
+noamz_fit = bn.fit(gs_noamz, to_train_noamazon, method="bayes", iss=10)
+train_pred_noamz = predict(noamz_fit,to_train_noamazon, node="bbox", df, method = "bayes-lw")
+confusionMatrix(table(to_train_noamazon$bbox, train_pred_noamz))
+```
+
+TEST
+NOAMAZON
+```{r}
+#noamz_fit = bn.fit(gs_noamz, to_train_noamazon, method="bayes", iss=10)
+test_pred_noamz = predict(noamz_fit,to_test_noamazon, node="bbox", df, method = "bayes-lw")
+confusionMatrix(table(to_test_noamazon$bbox, test_pred_noamz), positive="yes")
+```
+AMAZON
+```{r}
+test_pred_amz = predict(amz_fit,to_test_amazon, node="bbox", method = "bayes-lw")
+confusionMatrix(table(to_test_amazon$bbox, test_pred_amz), positive="yes")
+```
+
+```{r}
+to_test_amazon$prediction = test_pred_amz
+to_test_noamazon$prediction = test_pred_noamz
+to_test_noamazon[, is_amazon:="no"]
+total_test = rbind(to_test_amazon, to_test_noamazon)
+confusionMatrix(table(total_test$bbox, total_test$prediction), positive = "yes")
+```
+
+```{r}
+to_train_amazon$prediction = train_pred_amz
+to_train_noamazon$prediction = train_pred_noamz
+to_train_noamazon[, is_amazon:="no"]
+total_train = rbind(to_train_noamazon, to_train_amazon)
+confusionMatrix(table(total_train$bbox, total_train$prediction), positive = "yes")
+```
+
+
+
